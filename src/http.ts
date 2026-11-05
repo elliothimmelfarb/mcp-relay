@@ -23,6 +23,11 @@ function send(res: ServerResponse, status: number, text: string, headers: Record
   res.end(text);
 }
 
+function logFailure(error: unknown) {
+  // Never log request bodies: they may hold the text the secret check is there to stop.
+  console.error("request failed:", error instanceof Error ? error.message : error);
+}
+
 async function handleMcp(relay: Relay, req: IncomingMessage, res: ServerResponse) {
   const caller = relay.authenticate(tokenFrom(req.headers.authorization));
   if (!caller) {
@@ -42,7 +47,7 @@ async function handleMcp(relay: Relay, req: IncomingMessage, res: ServerResponse
   });
   // Closing the transport aborts a running check_inbox, so that a client that
   // hangs up mid-wait does not consume messages it can no longer receive.
-  res.on("close", () => void server.close());
+  res.on("close", () => void server.close().catch(logFailure));
   await server.connect(transport);
   await transport.handleRequest(req, res);
 }
@@ -70,19 +75,28 @@ function handlePage(relay: Relay, req: IncomingMessage, res: ServerResponse) {
   res.end(renderTeamPage(relay.teamLog(), relay.listPeople(), relay.retentionDays));
 }
 
+async function route(relay: Relay, req: IncomingMessage, res: ServerResponse) {
+  // A request target comes straight off the socket, and "//" alone does not parse.
+  const path = URL.parse(req.url ?? "/", "http://relay")?.pathname;
+  if (path === undefined) send(res, 400, "Bad request target.\n");
+  else if (path === "/mcp") await handleMcp(relay, req, res);
+  else if (path === "/") handlePage(relay, req, res);
+  else send(res, 404, "Not found.\n");
+}
+
+/** Must not throw: it runs after every other handler has already failed. */
+function fail(res: ServerResponse, error: unknown) {
+  try {
+    logFailure(error);
+    if (!res.headersSent) send(res, 500, "Internal error.\n");
+    else res.destroy();
+  } catch {
+    res.destroy();
+  }
+}
+
 export function createHttpServer(relay: Relay): Server {
-  return createServer((req, res) => {
-    const path = new URL(req.url ?? "/", "http://relay").pathname;
-    const handled = (async () => {
-      if (path === "/mcp") await handleMcp(relay, req, res);
-      else if (path === "/") handlePage(relay, req, res);
-      else send(res, 404, "Not found.\n");
-    })();
-    handled.catch((error) => {
-      // Never log request bodies: they may hold the text the secret check is there to stop.
-      console.error("request failed:", error instanceof Error ? error.message : error);
-      if (!res.headersSent) send(res, 500, "Internal error.\n");
-      else res.destroy();
-    });
-  });
+  // route is async, so anything it throws arrives here as a rejection. Keep all
+  // request work inside it: a throw in this callback would end the process.
+  return createServer((req, res) => void route(relay, req, res).catch((error) => fail(res, error)));
 }
