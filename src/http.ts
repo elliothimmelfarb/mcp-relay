@@ -7,16 +7,21 @@ import type { Relay } from "./relay.js";
 const CSP =
   "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
-function tokenFrom(header: string | undefined): string {
+function tokenFrom(header: string | undefined, { allowBasic = false } = {}): string {
   if (!header) return "";
   const [scheme, value = ""] = header.split(" ", 2);
   if (scheme?.toLowerCase() === "bearer") return value;
-  if (scheme?.toLowerCase() === "basic") {
+  if (allowBasic && scheme?.toLowerCase() === "basic") {
     const decoded = Buffer.from(value, "base64").toString();
     return decoded.slice(decoded.indexOf(":") + 1);
   }
   return "";
 }
+
+export type HttpOptions = {
+  /** Browser origins allowed to call /mcp. A request with no Origin header is not from a browser page. */
+  allowedOrigins?: string[];
+};
 
 function send(res: ServerResponse, status: number, text: string, headers: Record<string, string> = {}) {
   res.writeHead(status, { "content-type": "text/plain; charset=utf-8", ...headers });
@@ -28,7 +33,12 @@ function logFailure(error: unknown) {
   console.error("request failed:", error instanceof Error ? error.message : error);
 }
 
-async function handleMcp(relay: Relay, req: IncomingMessage, res: ServerResponse) {
+async function handleMcp(relay: Relay, req: IncomingMessage, res: ServerResponse, allowedOrigins: string[]) {
+  const { origin } = req.headers;
+  if (origin !== undefined && !allowedOrigins.includes(origin)) {
+    send(res, 403, "This origin is not allowed.\n");
+    return;
+  }
   const caller = relay.authenticate(tokenFrom(req.headers.authorization));
   if (!caller) {
     send(res, 401, "A valid bearer token is required.\n", { "www-authenticate": "Bearer" });
@@ -57,10 +67,13 @@ function handlePage(relay: Relay, req: IncomingMessage, res: ServerResponse) {
     send(res, 405, "This page is read-only.\n", { allow: "GET, HEAD" });
     return;
   }
-  // HTTP Basic, with the token as the password, gives browsers a built-in prompt.
-  // That means no login form, no session cookie, and nothing that can change state.
-  if (!relay.authenticate(tokenFrom(req.headers.authorization))) {
-    send(res, 401, "Sign in with your handle and relay token.\n", {
+  // HTTP Basic, with the token as the password, gives browsers a built-in prompt
+  // and needs no login form or session cookie. The browser then attaches those
+  // credentials on its own, including to requests other sites trigger, so they
+  // are good here, where nothing changes, and refused on /mcp, where sends happen.
+  // Only the password is checked: the username can be anything.
+  if (!relay.authenticate(tokenFrom(req.headers.authorization, { allowBasic: true }))) {
+    send(res, 401, "Sign in with your relay token as the password.\n", {
       "www-authenticate": 'Basic realm="mcp-relay", charset="UTF-8"',
     });
     return;
@@ -75,11 +88,11 @@ function handlePage(relay: Relay, req: IncomingMessage, res: ServerResponse) {
   res.end(renderTeamPage(relay.teamLog(), relay.listPeople(), relay.retentionDays));
 }
 
-async function route(relay: Relay, req: IncomingMessage, res: ServerResponse) {
+async function route(relay: Relay, req: IncomingMessage, res: ServerResponse, allowedOrigins: string[]) {
   // A request target comes straight off the socket, and "//" alone does not parse.
   const path = URL.parse(req.url ?? "/", "http://relay")?.pathname;
   if (path === undefined) send(res, 400, "Bad request target.\n");
-  else if (path === "/mcp") await handleMcp(relay, req, res);
+  else if (path === "/mcp") await handleMcp(relay, req, res, allowedOrigins);
   else if (path === "/") handlePage(relay, req, res);
   else send(res, 404, "Not found.\n");
 }
@@ -95,8 +108,10 @@ function fail(res: ServerResponse, error: unknown) {
   }
 }
 
-export function createHttpServer(relay: Relay): Server {
+export function createHttpServer(relay: Relay, { allowedOrigins = [] }: HttpOptions = {}): Server {
   // route is async, so anything it throws arrives here as a rejection. Keep all
   // request work inside it: a throw in this callback would end the process.
-  return createServer((req, res) => void route(relay, req, res).catch((error) => fail(res, error)));
+  return createServer((req, res) => {
+    void route(relay, req, res, allowedOrigins).catch((error) => fail(res, error));
+  });
 }

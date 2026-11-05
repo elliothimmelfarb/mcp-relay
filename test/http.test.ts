@@ -9,9 +9,9 @@ import { setup } from "./helpers.js";
 
 const running: { server: Server; store: Store }[] = [];
 
-async function start() {
+async function start(options?: Parameters<typeof createHttpServer>[1]) {
   const context = setup();
-  const server = createHttpServer(context.relay);
+  const server = createHttpServer(context.relay, options);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   running.push({ server, store: context.store });
@@ -214,5 +214,44 @@ describe("team page", () => {
     const page = await fetch(base, { headers: { authorization: basic(alice.token) } });
     const html = await page.text();
     expect(html).not.toMatch(/[0-9a-f]{64}/);
+  });
+});
+
+describe("/mcp accepts bearer tokens only", () => {
+  const initialize = {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "test", version: "1" } },
+  };
+  const post = (base: string, headers: Record<string, string>) =>
+    fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...headers },
+      body: JSON.stringify(initialize),
+    });
+
+  it("refuses the team page's Basic credentials", async () => {
+    const { base, alice } = await start();
+    const authorization = `Basic ${Buffer.from(`alice:${alice.token}`).toString("base64")}`;
+    const response = await post(base, { authorization });
+    expect(response.status).toBe(401);
+    expect(response.headers.get("www-authenticate")).toMatch(/Bearer/);
+  });
+
+  it("refuses a browser origin that is not on the allowlist, even with a good token", async () => {
+    const { base, alice } = await start();
+    for (const origin of ["https://evil.example", "null"]) {
+      const response = await post(base, { authorization: `Bearer ${alice.token}`, origin });
+      expect(response.status, origin).toBe(403);
+    }
+  });
+
+  it("allows an origin on the allowlist, and a client that sends no Origin", async () => {
+    const { base, alice } = await start({ allowedOrigins: ["https://team.example"] });
+    const authorization = `Bearer ${alice.token}`;
+    expect((await post(base, { authorization, origin: "https://team.example" })).status).toBe(200);
+    expect((await post(base, { authorization })).status).toBe(200);
+    expect((await post(base, { authorization, origin: "https://other.example" })).status).toBe(403);
   });
 });

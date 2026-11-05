@@ -12,12 +12,12 @@ const USAGE = `Usage:
   mcp-relay revoke <handle>          Cut a person off
   mcp-relay people                   List people`;
 
-function serve(relay: Relay, host: string, port: number) {
+function serve(relay: Relay, { host, port, allowedOrigins }: ReturnType<typeof loadConfig>) {
   relay.purge();
   const purgeTimer = setInterval(() => relay.purge(), HOUR_MS);
   purgeTimer.unref();
 
-  const server = createHttpServer(relay);
+  const server = createHttpServer(relay, { allowedOrigins });
   server.listen(port, host, () => {
     console.log(`mcp-relay listening on http://${host}:${port}`);
     console.log(`  MCP endpoint: /mcp   Team page: /   Retention: ${relay.retentionDays} days`);
@@ -37,11 +37,11 @@ function serve(relay: Relay, host: string, port: number) {
   process.on("SIGTERM", stop);
 }
 
-function printToken(handle: string, token: string, host: string, port: number) {
+function printToken(handle: string, token: string, publicUrl: string) {
   console.log(`Token for ${handle}. It is shown only this once:\n\n  ${token}\n`);
   console.log("Connect Claude Code with:\n");
   console.log(
-    `  claude mcp add --transport http relay http://${host}:${port}/mcp ` +
+    `  claude mcp add --transport http relay ${publicUrl}/mcp ` +
       `--header "Authorization: Bearer ${token}"`,
   );
 }
@@ -63,13 +63,13 @@ function main() {
   const store = new SqliteStore(config.dbPath);
   const relay = new Relay({ store, retentionDays: config.retentionDays });
 
-  if (command === "serve") return serve(relay, config.host, config.port);
+  if (command === "serve") return serve(relay, config);
   try {
     if (command === "add") {
       const { token } = relay.addPerson(needHandle(), nameParts.join(" ") || needHandle());
-      printToken(needHandle(), token, config.host, config.port);
+      printToken(needHandle(), token, config.publicUrl);
     } else if (command === "rotate") {
-      printToken(needHandle(), relay.rotate(needHandle()), config.host, config.port);
+      printToken(needHandle(), relay.rotate(needHandle()), config.publicUrl);
     } else if (command === "revoke") {
       relay.revoke(needHandle());
       console.log(`Revoked ${handle}.`);

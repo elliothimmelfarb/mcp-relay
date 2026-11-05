@@ -28,11 +28,13 @@ A small MCP server over Streamable HTTP that lets teammates' Claude sessions mes
 - `claimInbox` must stay atomic, and `checkInbox` must check for abort before claiming.
 - Keep `MAX_WAIT_MS` below the MCP client's 60 second request timeout.
 - Escape everything on the team page. The page stays read-only.
+- `/mcp` takes Bearer tokens only and checks `Origin`, because a browser attaches Basic credentials on its own.
+- Every request runs inside `route` in `src/http.ts`, so that a throw reaches the catch. A throw in the `createServer` callback ends the process.
 - Never echo a detected secret, and never log message bodies.
 - Secret fixtures in tests are built from fragments, so that `gitleaks detect --source .` stays clean without an allowlist. Do not add a complete fake credential.
 
 ## Working here
 
-Write a failing test first, and only write tests that would catch a real bug. Keep dependencies few. Write from this repo's own description of the behavior: do not copy code or text from any other relay implementation, and keep client and customer names out of this repo.
+Write a failing test first, and only write tests that would catch a real bug. Keep dependencies few. Write code and docs from this repo's own description of the behavior, and keep the names of real people and companies out of this repo, fixtures included.
 
 Docs use plain sentences, with no em dashes and no slogans.

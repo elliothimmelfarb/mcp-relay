@@ -30,14 +30,7 @@ npm run relay -- add alice "Alice Example"
 npm run relay -- add bob "Bob Example"
 ```
 
-Each person then connects Claude Code with their own token:
-
-```sh
-claude mcp add --transport http relay http://127.0.0.1:8787/mcp \
-  --header "Authorization: Bearer YOUR_TOKEN"
-```
-
-That command stores the token in your Claude Code settings. To keep it in your environment instead, put this in a `.mcp.json` file and set `RELAY_TOKEN` in your shell:
+Each person then connects Claude Code with their own token. Put this in a `.mcp.json` file and set `RELAY_TOKEN` in your shell, so the token stays out of your shell history and out of any file you might commit:
 
 ```json
 {
@@ -51,11 +44,28 @@ That command stores the token in your Claude Code settings. To keep it in your e
 }
 ```
 
-To see the team page, open `http://127.0.0.1:8787/` in a browser. When it asks you to sign in, enter your handle as the username and your token as the password.
+You can use `claude mcp add` instead, which is the command `add` and `rotate` print. It stores the token in your Claude Code settings, and the token also lands in your shell history:
 
-For a real team the server has to be reachable by everyone, which means setting `RELAY_HOST` and putting a TLS proxy in front of it, because the server itself speaks plain HTTP and tokens would otherwise cross the network unencrypted.
+```sh
+claude mcp add --transport http relay http://127.0.0.1:8787/mcp \
+  --header "Authorization: Bearer YOUR_TOKEN"
+```
 
-Other commands:
+To see the team page, open `http://127.0.0.1:8787/` in a browser. When it asks you to sign in, enter your token as the password. The username is not checked, so you can leave it blank or type anything.
+
+## Put TLS in front of it
+
+The server speaks plain HTTP, so tokens cross the network unencrypted unless a proxy adds TLS. For a real team, keep the server on `127.0.0.1` and let a proxy on the same machine face the network. With [Caddy](https://caddyserver.com), which gets its own certificate, this is the whole config:
+
+```
+relay.example.com {
+  reverse_proxy 127.0.0.1:8787
+}
+```
+
+Then set `RELAY_PUBLIC_URL=https://relay.example.com` when you run `add` and `rotate`, so the commands they print use that address, and use the same address in `.mcp.json`. If the proxy runs on another machine, set `RELAY_HOST` to an address that machine can reach.
+
+## Other commands
 
 ```sh
 npm run relay -- people            # list people
@@ -76,6 +86,8 @@ npm run relay -- revoke alice      # cut someone off at once
 
 **Per-person tokens, hashed at rest.** Tokens are 256 random bits. The database holds only their SHA-256 hash. A fast hash is the right choice here because the tokens are random, so there is nothing to guess. The sender of a message always comes from the token, and no tool accepts a sender as an argument.
 
+**`/mcp` takes Bearer tokens only, and refuses unknown browser origins.** A browser attaches the team page's Basic credentials to requests on its own, so those credentials do not work on `/mcp`. A request with an `Origin` header that is not listed in `RELAY_ALLOWED_ORIGINS` gets a 403, even with a good token. A request with no `Origin` header is allowed, because non-browser clients such as Claude Code do not send one.
+
 **Messages expire.** A message expires a set number of days after it is sent, whether or not it was read. The default is 30 and `RELAY_RETENTION_DAYS` changes it. An expired message disappears from every read at the moment it expires, and a purge at startup and once an hour then deletes the row.
 
 **The team can see everything.** Any person with a valid token can open the page at `/` and read all live messages, including ones between other people. The page only answers `GET` and `HEAD`. Message text is escaped and a content security policy blocks scripts, so a message cannot run code in a teammate's browser.
@@ -92,6 +104,8 @@ npm run relay -- revoke alice      # cut someone off at once
 | `RELAY_HOST` | `127.0.0.1` | Address to listen on |
 | `RELAY_PORT` | `8787` | Port to listen on |
 | `RELAY_RETENTION_DAYS` | `30` | Days before a message expires. Must be a positive number. |
+| `RELAY_PUBLIC_URL` | `http://RELAY_HOST:RELAY_PORT` | The address `add` and `rotate` print in the connect command |
+| `RELAY_ALLOWED_ORIGINS` | none | Comma separated browser origins allowed to call `/mcp` |
 
 ## Using another database
 

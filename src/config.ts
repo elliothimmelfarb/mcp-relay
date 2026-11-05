@@ -10,11 +10,37 @@ export function parseRetentionDays(value: string | undefined): number {
   return days;
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
+/** A typo here must stop startup too: a value that can never match would refuse every browser client. */
+function parseAllowedOrigins(value = ""): string[] {
+  const entries = value.split(",").map((entry) => entry.trim()).filter(Boolean);
+  return entries.map((entry) => {
+    const url = URL.parse(entry);
+    if (!url || url.origin === "null" || url.pathname !== "/" || url.search || url.hash) {
+      throw new Error(`RELAY_ALLOWED_ORIGINS must list origins like https://team.example, got "${entry}"`);
+    }
+    return url.origin;
+  });
+}
+
+function parsePublicUrl(value: string): string {
+  const url = URL.parse(value);
+  if (!url || !["http:", "https:"].includes(url.protocol)) {
+    throw new Error(`RELAY_PUBLIC_URL must be an http or https URL, got "${value}"`);
+  }
+  return url.href.replace(/\/+$/, "");
+}
+
+export function loadConfig(env: Record<string, string | undefined> = process.env) {
+  const host = env.RELAY_HOST ?? "127.0.0.1";
+  const port = Number(env.RELAY_PORT ?? 8787);
   return {
     dbPath: env.RELAY_DB ?? "data/relay.db",
-    host: env.RELAY_HOST ?? "127.0.0.1",
-    port: Number(env.RELAY_PORT ?? 8787),
+    host,
+    port,
     retentionDays: parseRetentionDays(env.RELAY_RETENTION_DAYS),
+    allowedOrigins: parseAllowedOrigins(env.RELAY_ALLOWED_ORIGINS),
+    publicUrl: env.RELAY_PUBLIC_URL
+      ? parsePublicUrl(env.RELAY_PUBLIC_URL)
+      : `http://${host.includes(":") ? `[${host}]` : host}:${port}`,
   };
 }
