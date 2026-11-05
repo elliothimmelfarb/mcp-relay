@@ -1,0 +1,33 @@
+{
+  "name": "mcp-relay",
+  "version": "0.1.0",
+  "description": "A small MCP server that lets teammates' Claude sessions message each other.",
+  "license": "MIT",
+  "author": "Elliot Himmelfarb",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "bin": {
+    "mcp-relay": "dist/cli.js"
+  },
+  "scripts": {
+    "start": "tsx --disable-warning=ExperimentalWarning src/cli.ts serve",
+    "relay": "tsx --disable-warning=ExperimentalWarning src/cli.ts",
+    "demo": "tsx --disable-warning=ExperimentalWarning src/demo.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.12"
+  }
+}
